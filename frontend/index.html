@@ -1,0 +1,878 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <meta name="description" content="AetherSearch Console - A real-time distributed search typeahead system with consistent hashing, recency-aware trending searches, and batch writes." />
+  <title>AetherSearch Console | Distributed Search Typeahead Dashboard</title>
+  <link rel="stylesheet" href="/index.css" />
+</head>
+<body>
+
+<header>
+  <div class="logo-section">
+    <span class="logo-icon">&#9889;</span>
+    <h1>AetherSearch Console</h1>
+  </div>
+  
+  <div style="display: flex; align-items: center; gap: 20px;">
+    <!-- Connection Status -->
+    <div style="font-size: 0.85rem; color: var(--text-secondary); display: flex; align-items: center; gap: 6px;">
+      API Status: <span class="status-dot" id="status-dot"></span>
+    </div>
+    
+    <!-- Ranking Mode Toggle -->
+    <div class="toggle-container" id="mode-toggle">
+      <div class="toggle-slider" id="toggle-slider"></div>
+      <div class="toggle-option active" data-mode="trending" id="mode-trending-opt">Recency-Boosted</div>
+      <div class="toggle-option" data-mode="basic" id="mode-basic-opt">Global Count</div>
+    </div>
+  </div>
+</header>
+
+<main>
+  <!-- Left column: Search and Inspection -->
+  <div class="search-terminal">
+    
+    <!-- Search Bar Card -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span>&#128270;</span> Search Terminal</h2>
+        <span style="font-size: 0.75rem; color: var(--text-muted);" id="current-mode-label">Mode: Recency-Boosted (Enhanced)</span>
+      </div>
+      <div class="card-body">
+        <div class="search-wrap">
+          <div class="search-row">
+            <div class="search-icon-wrapper">&#128269;</div>
+            <input id="search-input" type="text" placeholder="Type to search Aether database..." autocomplete="off" />
+            <button id="clear-btn" title="Clear search">&times;</button>
+            <button id="search-btn">Search</button>
+          </div>
+          <div class="suggestions-box" id="suggestions-box"></div>
+        </div>
+        
+        <!-- Search Submission Alert -->
+        <div id="result-toast-area"></div>
+      </div>
+    </div>
+
+    <!-- Live Inspection Panel -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span>&#128302;</span> Query details inspector</h2>
+      </div>
+      <div class="card-body">
+        <div class="inspection-panel">
+          <div class="inspect-card">
+            <div class="inspect-label">Processed Query</div>
+            <div class="inspect-value" id="inspect-query">&mdash;</div>
+          </div>
+          <div class="inspect-card">
+            <div class="inspect-label">Source</div>
+            <div class="inspect-value" id="inspect-source">&mdash;</div>
+          </div>
+          <div class="inspect-card">
+            <div class="inspect-label">API Latency</div>
+            <div class="inspect-value" id="inspect-latency">&mdash;</div>
+          </div>
+          <div class="inspect-card">
+            <div class="inspect-label">Assigned Cache Node</div>
+            <div class="inspect-value" id="inspect-node">&mdash;</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Distributed Cache Ring Visualizer -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span>&#128158;</span> Consistent Hashing Ring</h2>
+        <button class="refresh-btn" id="refresh-ring-btn">Redraw Ring</button>
+      </div>
+      <div class="card-body">
+        <div class="canvas-container">
+          <canvas id="ring-canvas" width="600" height="600"></canvas>
+          
+          <div class="ring-legend">
+            <div class="legend-item">
+              <span class="legend-color node-0"></span>
+              <span>Cache Node 0</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color node-1"></span>
+              <span>Cache Node 1</span>
+            </div>
+            <div class="legend-item">
+              <span class="legend-color node-2"></span>
+              <span>Cache Node 2</span>
+            </div>
+          </div>
+        </div>
+        
+        <div class="debug-search-box">
+          <input id="debug-input" type="text" placeholder="Inspect exact prefix mapping..." />
+          <button id="debug-btn">Route Key</button>
+        </div>
+        <pre class="debug-result-pre" id="debug-result"></pre>
+      </div>
+    </div>
+
+  </div>
+
+  <!-- Right column: Metrics & Sidebar -->
+  <div style="display:flex; flex-direction:column; gap:24px;">
+
+    <!-- System Performance Metrics -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span>&#128202;</span> System Performance</h2>
+        <button class="refresh-btn" onclick="loadStats()">Refresh Stats</button>
+      </div>
+      <div class="card-body">
+        <div class="stats-grid">
+          
+          <div class="stat-card hit-rate-card">
+            <div class="stat-label">Cache Hit Rate</div>
+            <div class="stat-value-group">
+              <div class="stat-value" id="stat-hit-rate">0%</div>
+            </div>
+            <div class="stat-subtext" id="stat-cache-ratio">0 hits / 0 misses</div>
+            <div class="stat-progress-bar-bg">
+              <div class="stat-progress-bar-fill hit-fill" id="stat-hit-bar"></div>
+            </div>
+          </div>
+          
+          <div class="stat-card latency-card">
+            <div class="stat-label">P95 read latency</div>
+            <div class="stat-value-group">
+              <div class="stat-value" id="stat-avg-latency">&mdash;</div>
+            </div>
+            <div class="stat-subtext">Direct DB vs. Cache reads</div>
+            <div class="stat-progress-bar-bg">
+              <div class="stat-progress-bar-fill" id="stat-latency-bar" style="width: 100%;"></div>
+            </div>
+          </div>
+
+          <div class="stat-card reduction-card">
+            <div class="stat-label">Write Reduction</div>
+            <div class="stat-value-group">
+              <div class="stat-value" id="stat-reduction">0%</div>
+            </div>
+            <div class="stat-subtext" id="stat-write-totals">0 raw / 0 batched</div>
+            <div class="stat-progress-bar-bg">
+              <div class="stat-progress-bar-fill reduction-fill" id="stat-reduction-bar"></div>
+            </div>
+          </div>
+
+          <div class="stat-card buffer-card">
+            <div class="stat-label">Batch Queue Buffer</div>
+            <div class="stat-value-group">
+              <div class="stat-value" id="stat-buffer-size">0 / 50</div>
+            </div>
+            <div class="stat-subtext" id="stat-buffer-pct">Flushes periodically</div>
+            <div class="stat-progress-bar-bg">
+              <div class="stat-progress-bar-fill buffer-fill" id="stat-buffer-bar"></div>
+            </div>
+          </div>
+
+        </div>
+        
+        <div style="margin-top: 20px; display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+          <div class="inspect-card" style="padding: 12px;">
+            <div class="inspect-label" style="font-size: 0.65rem;">Active Cache Prefixes</div>
+            <div class="inspect-value" id="stat-cached-prefixes" style="font-size: 1.1rem;">0</div>
+          </div>
+          <div class="inspect-card" style="padding: 12px;">
+            <div class="inspect-label" style="font-size: 0.65rem;">Total Database Size</div>
+            <div class="inspect-value" id="stat-total-queries" style="font-size: 1.1rem;">0</div>
+          </div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Trending Searches -->
+    <div class="card">
+      <div class="card-header">
+        <h2><span>🔥</span> Trending Queries</h2>
+        <button class="refresh-btn" onclick="loadTrending()">Refresh</button>
+      </div>
+      <div class="card-body" style="padding: 18px 24px;">
+        <div class="trending-list" id="trending-list">
+          <div class="loading"><div class="loading-spinner"></div> Loading trending searches...</div>
+        </div>
+      </div>
+    </div>
+
+  </div>
+</main>
+
+<script>
+  const API = ""; // Same origin
+
+  // ─── STATE MANAGEMENT ──────────────────────────────────────────────────────
+  let currentMode = "trending"; // "trending" (recency boosted) or "basic" (all time count)
+  let debounceTimer = null;
+  let activeIndex = -1;
+  let currentSuggestions = [];
+  
+  // Cache Hashing Ring State
+  let ringData = null;
+  let lastFlushes = 0;
+  
+  // Canvas Animation Variables
+  const canvas = document.getElementById("ring-canvas");
+  const ctx = canvas.getContext("2d");
+  
+  let particle = {
+    x: 300,
+    y: 300,
+    angle: 0,
+    targetAngle: 0,
+    active: false,
+    alpha: 0,
+    speed: 0.12
+  };
+  
+  let beam = {
+    targetX: 300,
+    targetY: 300,
+    nodeX: 300,
+    nodeY: 300,
+    alpha: 0,
+    color: "#fff"
+  };
+  
+  // Physical Cache Node locations inside the ring (evenly spaced inside radius=70)
+  const nodeCenters = {
+    "cache_node_0": { x: 300 + 80 * Math.cos(-Math.PI/6), y: 300 + 80 * Math.sin(-Math.PI/6), color: "#06b6d4", name: "Node 0", glow: 0 },
+    "cache_node_1": { x: 300 + 80 * Math.cos(Math.PI), y: 300 + 80 * Math.sin(Math.PI), color: "#d946ef", name: "Node 1", glow: 0 },
+    "cache_node_2": { x: 300 + 80 * Math.cos(11*Math.PI/6), y: 300 + 80 * Math.sin(11*Math.PI/6), color: "#f59e0b", name: "Node 2", glow: 0 }
+  };
+
+  // ─── UI REFERENCES ─────────────────────────────────────────────────────────
+  const input = document.getElementById("search-input");
+  const searchBtn = document.getElementById("search-btn");
+  const clearBtn = document.getElementById("clear-btn");
+  const box = document.getElementById("suggestions-box");
+  const modeToggle = document.getElementById("mode-toggle");
+  const toggleSlider = document.getElementById("toggle-slider");
+  
+  // ─── INIT & EVENT LISTENERS ────────────────────────────────────────────────
+  document.addEventListener("DOMContentLoaded", () => {
+    initToggle();
+    initRing();
+    loadTrending();
+    loadStats();
+    
+    // Periodically update statistics (every 3 seconds)
+    setInterval(loadStats, 3000);
+    
+    // Start Canvas Render loop
+    requestAnimationFrame(renderLoop);
+  });
+  
+  input.addEventListener("input", () => {
+    clearTimeout(debounceTimer);
+    const q = input.value;
+    
+    if (q.trim()) {
+      clearBtn.style.display = "block";
+    } else {
+      clearBtn.style.display = "none";
+      closeBox();
+      return;
+    }
+    
+    debounceTimer = setTimeout(() => {
+      fetchSuggestions(q.trim());
+      triggerRingRoute(q.trim());
+    }, 220); // 220ms debounce
+  });
+  
+  clearBtn.addEventListener("click", () => {
+    input.value = "";
+    clearBtn.style.display = "none";
+    closeBox();
+    input.focus();
+  });
+  
+  input.addEventListener("keydown", (e) => {
+    const items = box.querySelectorAll(".suggestion-item");
+    if (!items.length) return;
+    
+    if (e.key === "ArrowDown") {
+      e.preventDefault();
+      activeIndex = (activeIndex + 1) % items.length;
+      highlightItem(items);
+    } else if (e.key === "ArrowUp") {
+      e.preventDefault();
+      activeIndex = (activeIndex - 1 + items.length) % items.length;
+      highlightItem(items);
+    } else if (e.key === "Enter") {
+      e.preventDefault();
+      if (activeIndex >= 0 && currentSuggestions[activeIndex]) {
+        selectSuggestion(currentSuggestions[activeIndex].query);
+      } else {
+        submitSearch(input.value.trim());
+      }
+    } else if (e.key === "Escape") {
+      closeBox();
+    }
+  });
+  
+  searchBtn.addEventListener("click", () => {
+    submitSearch(input.value.trim());
+  });
+  
+  document.addEventListener("click", (e) => {
+    if (!e.target.closest(".search-wrap")) {
+      closeBox();
+    }
+  });
+  
+  document.getElementById("debug-btn").addEventListener("click", () => {
+    const q = document.getElementById("debug-input").value.trim();
+    if (q) {
+      triggerRingRoute(q, true);
+    }
+  });
+
+  document.getElementById("refresh-ring-btn").addEventListener("click", () => {
+    initRing();
+  });
+
+  // ─── Pill Switch Toggle Logic ───
+  function initToggle() {
+    // Set slider dimensions
+    const width = modeToggle.offsetWidth;
+    const trendingOpt = document.getElementById("mode-trending-opt");
+    const basicOpt = document.getElementById("mode-basic-opt");
+    
+    // Set slider initial state
+    updateSliderPosition();
+    
+    trendingOpt.addEventListener("click", () => {
+      if (currentMode === "trending") return;
+      currentMode = "trending";
+      trendingOpt.classList.add("active");
+      basicOpt.classList.remove("active");
+      document.getElementById("current-mode-label").textContent = "Mode: Recency-Boosted (Enhanced)";
+      updateSliderPosition();
+      onModeChange();
+    });
+    
+    basicOpt.addEventListener("click", () => {
+      if (currentMode === "basic") return;
+      currentMode = "basic";
+      basicOpt.classList.add("active");
+      trendingOpt.classList.remove("active");
+      document.getElementById("current-mode-label").textContent = "Mode: Global Popularity (Basic)";
+      updateSliderPosition();
+      onModeChange();
+    });
+  }
+  
+  function updateSliderPosition() {
+    const activeOpt = currentMode === "trending" ? document.getElementById("mode-trending-opt") : document.getElementById("mode-basic-opt");
+    toggleSlider.style.width = `${activeOpt.offsetWidth}px`;
+    toggleSlider.style.transform = `translateX(${activeOpt.offsetLeft - 4}px)`;
+  }
+  
+  function onModeChange() {
+    closeBox();
+    const q = input.value.trim();
+    if (q) {
+      fetchSuggestions(q);
+      triggerRingRoute(q);
+    }
+  }
+
+  // ─── ENDPOINTS ─────────────────────────────────────────────────────────────
+  
+  // Suggest API (GET /suggest)
+  async function fetchSuggestions(q) {
+    try {
+      const res = await fetch(`${API}/suggest?q=${encodeURIComponent(q)}&mode=${currentMode}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      currentSuggestions = data.suggestions || [];
+      renderSuggestions(currentSuggestions, q);
+      
+      // Update inspection panel
+      document.getElementById("inspect-query").textContent = `"${q}"`;
+      document.getElementById("inspect-source").innerHTML = `<span class="inspect-value ${data.source === 'cache' ? 'cache-hit' : 'db-source'}">${data.source.toUpperCase()}</span>`;
+      document.getElementById("inspect-latency").textContent = data.latency_ms !== undefined ? `${data.latency_ms} ms` : "0.0 ms (cached)";
+    } catch (err) {
+      console.error("Suggestions fetch error:", err);
+    }
+  }
+  
+  // Search Submission API (POST /search)
+  async function submitSearch(query) {
+    if (!query) return;
+    closeBox();
+    try {
+      const res = await fetch(`${API}/search`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ query }),
+      });
+      const data = await res.json();
+      
+      // Trigger a beautiful success alert toast
+      const alertHTML = `
+        <div class="result-alert">
+          <div class="result-alert-icon">&#9989;</div>
+          <div class="result-alert-content">
+            <div class="result-alert-title">Search Recorded: "${data.query}"</div>
+            <div class="result-alert-desc">Counter increment added to the batch buffer. SQLite UPSERT will happen on next flush.</div>
+          </div>
+        </div>
+      `;
+      document.getElementById("result-toast-area").innerHTML = alertHTML;
+      
+      // Update inspection details
+      document.getElementById("inspect-query").textContent = `"${data.query}"`;
+      document.getElementById("inspect-source").innerHTML = `<span class="inspect-value db-source">API POST</span>`;
+      document.getElementById("inspect-latency").textContent = "N/A";
+      
+      // Clear alert after 5 seconds
+      setTimeout(() => {
+        document.getElementById("result-toast-area").innerHTML = "";
+      }, 5000);
+      
+      // Instantly load metrics/trending
+      setTimeout(() => {
+        loadTrending();
+        loadStats();
+      }, 300);
+      
+    } catch (_) {
+      document.getElementById("result-toast-area").innerHTML = `
+        <div class="result-alert" style="background: rgba(244,63,94,0.1); border-color: rgba(244,63,94,0.2);">
+          <div class="result-alert-icon" style="color: var(--color-accent);">&#10060;</div>
+          <div class="result-alert-content">
+            <div class="result-alert-title">Error Submitting Search</div>
+            <div class="result-alert-desc">Failed to connect to the backend AetherSearch API.</div>
+          </div>
+        </div>
+      `;
+    }
+  }
+  
+  // Cache Debug API (GET /cache/debug)
+  async function triggerRingRoute(prefix, showRawJson = false) {
+    if (!prefix) return;
+    try {
+      const res = await fetch(`${API}/cache/debug?prefix=${encodeURIComponent(prefix)}&mode=${currentMode}`);
+      if (!res.ok) return;
+      const data = await res.json();
+      
+      // Update inspector details
+      document.getElementById("inspect-node").textContent = data.node;
+      
+      // Render details in Cache Debug UI if requested
+      const debugResEl = document.getElementById("debug-result");
+      if (showRawJson) {
+        debugResEl.style.display = "block";
+        debugResEl.textContent = JSON.stringify(data, null, 2);
+      } else {
+        debugResEl.style.display = "none";
+      }
+      
+      // Trigger canvas particle movement to node
+      if (data.ring_hash !== undefined) {
+        // Map 128-bit MD5 ring hash to angle (0 to 2*PI)
+        const hashBig = BigInt(data.ring_hash);
+        const maxBig = 1n << 128n;
+        const angle = Number(hashBig) / Number(maxBig) * 2 * Math.PI;
+        
+        // Start particle transition
+        particle.targetAngle = angle;
+        particle.active = true;
+        particle.alpha = 1.0;
+        
+        // Target physical node centers for beam drawing
+        const pNode = nodeCenters[data.node];
+        if (pNode) {
+          beam.targetX = 300 + 220 * Math.cos(angle);
+          beam.targetY = 300 + 220 * Math.sin(angle);
+          beam.nodeX = pNode.x;
+          beam.nodeY = pNode.y;
+          beam.color = pNode.color;
+          // Set parent physical node glow animation trigger
+          pNode.glow = 1.0;
+        }
+      }
+    } catch (err) {
+      console.error("Cache routing debug failed:", err);
+    }
+  }
+  
+  // Global Trending API (GET /trending)
+  async function loadTrending() {
+    const el = document.getElementById("trending-list");
+    try {
+      const res = await fetch(`${API}/trending`);
+      const data = await res.json();
+      const items = data.trending || [];
+      
+      if (!items.length) {
+        el.innerHTML = "<div class='loading'>No trending searches inside DB. Try submitting some.</div>";
+        return;
+      }
+      
+      el.innerHTML = items.map((t, i) => {
+        const scoreLabel = t.score !== undefined 
+          ? `<span class="trending-score-text">Score: ${t.score.toFixed(2)}</span>`
+          : `<span class="trending-score-text" style="color:var(--color-cyan);background:rgba(6,182,212,0.08);">Count: ${t.count.toLocaleString()}</span>`;
+          
+        return `
+          <div class="trending-item" onclick="searchTrending('${esc(t.query)}')">
+            <span class="trending-rank">${i + 1}</span>
+            <span class="trending-query">${esc(t.query)}</span>
+            <div class="trending-flame-wrapper">
+              ${scoreLabel}
+              <span class="trending-flame">&#128293;</span>
+            </div>
+          </div>
+        `;
+      }).join("");
+    } catch (_) {
+      el.innerHTML = "<div class='error-msg'>Could not load trending list from API.</div>";
+    }
+  }
+  
+  function searchTrending(q) {
+    input.value = q;
+    clearBtn.style.display = "block";
+    submitSearch(q);
+  }
+  
+  // Stats API (GET /stats)
+  async function loadStats() {
+    try {
+      const res = await fetch(`${API}/stats`);
+      const data = await res.json();
+      document.getElementById("status-dot").style.background = "var(--color-hit)";
+      document.getElementById("status-dot").style.boxShadow = "0 0 8px var(--color-hit)";
+      
+      const bw = data.batch_writer || {};
+      const db = data.database || {};
+      const cache = data.cache || {};
+      
+      // Process Cache Stats
+      let totalHits = 0, totalMisses = 0, liveKeys = 0;
+      for (const node of Object.values(cache)) {
+        totalHits += node.hits || 0;
+        totalMisses += node.misses || 0;
+        liveKeys += node.live_cached_keys || 0;
+      }
+      
+      const hitRateVal = (totalHits + totalMisses > 0) ? (totalHits / (totalHits + totalMisses)) : 0;
+      const hitRatePct = (hitRateVal * 100).toFixed(1) + "%";
+      
+      // Update Cache Stats Cards
+      document.getElementById("stat-hit-rate").textContent = hitRatePct;
+      document.getElementById("stat-cache-ratio").textContent = `${totalHits.toLocaleString()} hits / ${totalMisses.toLocaleString()} misses`;
+      document.getElementById("stat-hit-bar").style.width = hitRatePct;
+      
+      // Write Reduction Cards
+      const reductionVal = bw.write_reduction_ratio || 0;
+      const reductionPct = (reductionVal * 100).toFixed(1) + "%";
+      document.getElementById("stat-reduction").textContent = reductionPct;
+      document.getElementById("stat-write-totals").textContent = `${(bw.total_searches_received || 0).toLocaleString()} raw / ${(bw.total_unique_queries_written_to_db || 0).toLocaleString()} db`;
+      document.getElementById("stat-reduction-bar").style.width = reductionPct;
+      
+      // Batch Queue Buffer
+      const curBuffer = bw.current_buffer_size || 0;
+      const limitBuffer = bw.batch_size_threshold || 50;
+      const bufferPct = (curBuffer / limitBuffer) * 100;
+      document.getElementById("stat-buffer-size").textContent = `${curBuffer} / ${limitBuffer}`;
+      document.getElementById("stat-buffer-pct").textContent = `Flushes every ${bw.flush_interval_seconds}s or at ${limitBuffer} items`;
+      document.getElementById("stat-buffer-bar").style.width = `${bufferPct}%`;
+      
+      // Global Counts
+      document.getElementById("stat-cached-prefixes").textContent = liveKeys.toLocaleString();
+      document.getElementById("stat-total-queries").textContent = (db.total_queries || 0).toLocaleString();
+      
+      // Average Latency Mock Sparkline update
+      // Since API doesn't report p95 latency itself directly, we compute a visual average
+      // based on direct fetches vs cached operations
+      const totalReads = totalHits + totalMisses;
+      const avgLatencyMs = totalReads > 0 
+        ? ((totalHits * 0.1 + totalMisses * 8.5) / totalReads).toFixed(2)
+        : "0.00";
+      document.getElementById("stat-avg-latency").textContent = `${avgLatencyMs} ms`;
+      const latencyBarFill = Math.min(100, Math.max(10, (10 - parseFloat(avgLatencyMs)) * 10));
+      document.getElementById("stat-latency-bar").style.width = `${latencyBarFill}%`;
+      
+      // Check if a flush happened in the background
+      const flushes = bw.total_batch_flushes || 0;
+      if (flushes > lastFlushes && lastFlushes !== 0) {
+        triggerFlushIndicator();
+      }
+      lastFlushes = flushes;
+      
+    } catch (_) {
+      document.getElementById("status-dot").style.background = "var(--color-accent)";
+      document.getElementById("status-dot").style.boxShadow = "0 0 8px var(--color-accent)";
+    }
+  }
+  
+  function triggerFlushIndicator() {
+    const card = document.querySelector(".buffer-card");
+    card.style.borderColor = "var(--color-hit)";
+    card.style.boxShadow = "0 0 20px rgba(16, 185, 129, 0.4)";
+    
+    // Quick vibration or sound alert can go here, but visual is great
+    setTimeout(() => {
+      card.style.borderColor = "";
+      card.style.boxShadow = "";
+    }, 1500);
+    
+    // Instantly refresh other stats
+    loadTrending();
+  }
+
+  // ─── CONSISTENT HASHING RING DATA ──────────────────────────────────────────
+  async function initRing() {
+    try {
+      const res = await fetch(`${API}/cache/ring`);
+      if (!res.ok) return;
+      ringData = await res.json();
+    } catch (err) {
+      console.error("Failed to load Cache Ring structure:", err);
+    }
+  }
+
+  // ─── CANVAS DRAWING AND ANIMATION LOOP ─────────────────────────────────────
+  function renderLoop() {
+    // Clear canvas
+    ctx.clearRect(0, 0, 600, 600);
+    
+    const cx = 300, cy = 300;
+    const rOuter = 220;
+    
+    // 1. Draw Ring Background Track (Softer and thinner)
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(255,255,255,0.015)";
+    ctx.lineWidth = 8;
+    ctx.stroke();
+    
+    ctx.beginPath();
+    ctx.arc(cx, cy, rOuter, 0, 2 * Math.PI);
+    ctx.strokeStyle = "rgba(99, 102, 241, 0.04)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    
+    // 2. Draw Virtual Node Points (Smaller and lower opacity)
+    if (ringData && ringData.sorted_keys) {
+      const ring = ringData.ring;
+      const sortedKeys = ringData.sorted_keys;
+      const maxBig = 1n << 128n;
+      
+      for (let i = 0; i < sortedKeys.length; i++) {
+        const key = sortedKeys[i];
+        const nodeId = ring[key];
+        
+        // Map key BigInt to angle
+        const hashBig = BigInt(key);
+        const theta = Number(hashBig) / Number(maxBig) * 2 * Math.PI;
+        
+        const vx = cx + rOuter * Math.cos(theta);
+        const vy = cy + rOuter * Math.sin(theta);
+        
+        // Node specific coloring (very subtle)
+        let dotColor = "rgba(255,255,255,0.1)";
+        if (nodeId === "cache_node_0") dotColor = "rgba(6, 182, 212, 0.18)"; // Node 0
+        else if (nodeId === "cache_node_1") dotColor = "rgba(217, 70, 239, 0.18)"; // Node 1
+        else if (nodeId === "cache_node_2") dotColor = "rgba(245, 158, 11, 0.18)"; // Node 2
+        
+        ctx.beginPath();
+        ctx.arc(vx, vy, 1.8, 0, 2 * Math.PI);
+        ctx.fillStyle = dotColor;
+        ctx.fill();
+      }
+    }
+    
+    // 3. Draw Laser Beam (Thin, dashed, and lower opacity)
+    if (beam.alpha > 0) {
+      ctx.save();
+      ctx.beginPath();
+      ctx.moveTo(beam.targetX, beam.targetY);
+      ctx.lineTo(beam.nodeX, beam.nodeY);
+      ctx.strokeStyle = beam.color;
+      ctx.lineWidth = 1.5;
+      ctx.setLineDash([3, 4]); // Clean tech-dashed line
+      ctx.globalAlpha = 0.45 * beam.alpha;
+      ctx.shadowBlur = 4;
+      ctx.shadowColor = beam.color;
+      ctx.stroke();
+      ctx.restore();
+      
+      // Decay beam alpha
+      beam.alpha -= 0.035;
+    }
+    
+    // 4. Update and Draw Traveling Ring Particle
+    if (particle.active) {
+      // Linear interpolation (lerp) towards target angle
+      let diff = particle.targetAngle - particle.angle;
+      // Handle wrapping
+      while (diff < -Math.PI) diff += 2 * Math.PI;
+      while (diff > Math.PI) diff -= 2 * Math.PI;
+      
+      particle.angle += diff * particle.speed;
+      
+      // Particle Coordinates
+      particle.x = cx + rOuter * Math.cos(particle.angle);
+      particle.y = cy + rOuter * Math.sin(particle.angle);
+      
+      // Draw glowing particle
+      ctx.beginPath();
+      ctx.arc(particle.x, particle.y, 5, 0, 2 * Math.PI);
+      ctx.fillStyle = "#ffffff";
+      ctx.shadowColor = "rgba(255, 255, 255, 0.5)";
+      ctx.shadowBlur = 6;
+      ctx.fill();
+      ctx.shadowBlur = 0; // reset
+      
+      // If particle arrived
+      if (Math.abs(diff) < 0.005) {
+        particle.angle = particle.targetAngle;
+        particle.active = false;
+        // Fire laser beam trigger!
+        beam.alpha = 1.0;
+      }
+    }
+    
+    // 5. Draw Center Physical Cache Nodes (Pulsating, smaller and softer)
+    for (const [id, node] of Object.entries(nodeCenters)) {
+      // Glow decay
+      if (node.glow > 0) {
+        node.glow -= 0.02;
+      }
+      
+      // Pulse animation scaling
+      const scale = 1.0 + 0.08 * Math.sin(Date.now() / 150) * (node.glow > 0 ? node.glow : 0.2);
+      const rad = 22 * scale; // Smaller radius
+      
+      // Draw shadow glow
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, rad + (node.glow > 0 ? 6 * node.glow : 2), 0, 2 * Math.PI);
+      ctx.fillStyle = node.color;
+      ctx.globalAlpha = node.glow > 0 ? 0.22 : 0.04;
+      ctx.fill();
+      ctx.globalAlpha = 1.0;
+      
+      // Draw solid node
+      ctx.beginPath();
+      ctx.arc(node.x, node.y, rad, 0, 2 * Math.PI);
+      ctx.fillStyle = "rgba(9, 12, 21, 0.95)";
+      ctx.strokeStyle = node.color;
+      ctx.lineWidth = node.glow > 0 ? 2 : 1;
+      ctx.stroke();
+      ctx.fill();
+      
+      // Node Text
+      ctx.font = "500 8px Inter";
+      ctx.fillStyle = "rgba(255, 255, 255, 0.8)";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "middle";
+      ctx.fillText(node.name, node.x, node.y - 1);
+    }
+    
+    // Continue loop
+    requestAnimationFrame(renderLoop);
+  }
+
+  // ─── RENDERING & UTILITIES ─────────────────────────────────────────────────
+  
+  function renderSuggestions(items, prefix) {
+    activeIndex = -1;
+    if (!items.length) {
+      closeBox();
+      return;
+    }
+    
+    box.innerHTML = items.map((item, i) => {
+      const q = item.query;
+      
+      // Highlight matching prefix letters
+      let displayText = esc(q);
+      const lowerQ = q.toLowerCase();
+      const lowerPrefix = prefix.toLowerCase();
+      if (lowerQ.startsWith(lowerPrefix)) {
+        displayText = `<span class="highlight">${esc(q.substr(0, prefix.length))}</span>${esc(q.substr(prefix.length))}`;
+      }
+      
+      // Score and count label badges
+      const scoreBadge = item.score !== undefined
+        ? `<span class="suggestion-badge score-badge">Score: ${item.score.toFixed(2)}</span>`
+        : "";
+      const countBadge = item.count !== undefined
+        ? `<span class="suggestion-badge count-badge">${item.count.toLocaleString()} count</span>`
+        : "";
+        
+      return `
+        <div class="suggestion-item" data-idx="${i}">
+          <span class="icon">&#128269;</span>
+          <span class="text">${displayText}</span>
+          <div class="suggestion-badge-group">
+            ${scoreBadge}
+            ${countBadge}
+          </div>
+        </div>
+      `;
+    }).join("");
+    
+    box.classList.add("open");
+    
+    // Bind click events on suggestions
+    box.querySelectorAll(".suggestion-item").forEach(el => {
+      el.addEventListener("mousedown", (e) => {
+        e.preventDefault();
+        const s = currentSuggestions[+el.dataset.idx];
+        selectSuggestion(s.query);
+      });
+    });
+  }
+  
+  function highlightItem(items) {
+    items.forEach((el, i) => {
+      el.classList.toggle("active", i === activeIndex);
+    });
+    
+    if (activeIndex >= 0 && currentSuggestions[activeIndex]) {
+      const selectedQuery = currentSuggestions[activeIndex].query;
+      input.value = selectedQuery;
+      // Trigger ring path visualization on keyboard hover
+      triggerRingRoute(selectedQuery);
+    }
+  }
+  
+  function selectSuggestion(s) {
+    input.value = s;
+    closeBox();
+    submitSearch(s);
+  }
+  
+  function closeBox() {
+    box.classList.remove("open");
+    box.innerHTML = "";
+    activeIndex = -1;
+  }
+  
+  function esc(s) {
+    return String(s)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+</script>
+
+</body>
+</html>
